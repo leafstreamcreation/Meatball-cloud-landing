@@ -64,7 +64,7 @@ function composeMailRequest() {
     return {
       senderEmail: email,
       replyTo: email,
-      destination: import.meta.env.VITE_DESTINATION_ADDRESS,
+      destination: import.meta.env.VITE_RECIPIENT_EMAIL,
       subject: `${interest}: ${restaurant}`,
       text: `From: ${name} (${email})\n\n${message}`,
       html: `
