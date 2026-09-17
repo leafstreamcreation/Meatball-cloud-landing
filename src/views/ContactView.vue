@@ -58,15 +58,96 @@ function fieldError(field) {
   return errors[field] || '';
 }
 
+function composeMailRequest() {
+    const { name, email, restaurant, interest, message } = form;
+
+    return {
+      senderEmail: email,
+      replyTo: email,
+      destination: import.meta.env.VITE_DESTINATION_ADDRESS,
+      subject: `${interest}: ${restaurant}`,
+      text: `From: ${name} (${email})\n\n${message}`,
+      html: `
+        <p><strong>From:</strong> ${name} (${email})</p>
+        <p>${message.replace(/\n/g, '<br>')}</p>
+      `
+    };
+  };
+
+async function encryptApiKey() {
+  const iv = crypto.getRandomValues(new Uint8Array(parseInt(import.meta.env.VITE_AES_IV_LENGTH || "12")));
+  const salt = crypto.getRandomValues(new Uint8Array(parseInt(import.meta.env.VITE_PBKDF2_SALT_LENGTH || "16")));
+
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(import.meta.env.VITE_BASE_KEY_SECRET || ""),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+  const derivedKey = await crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: parseInt(import.meta.env.VITE_PBKDF2_ITERATIONS || "100000"),
+      hash: "SHA-256"
+    },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"]
+  );
+  const encrypted = await crypto.subtle.encrypt(
+    { 
+      name: "AES-GCM", 
+      iv,
+      tagLength: parseInt(import.meta.env.VITE_AES_TAG_LENGTH || "128")
+    },
+    derivedKey,
+    new TextEncoder().encode(import.meta.env.VITE_API_SECRET || "")
+  );
+  const fullKey = new Uint8Array(salt.byteLength + iv.byteLength + encrypted.byteLength);
+  fullKey.set(new Uint8Array(encrypted), 0);
+  fullKey.set(iv, encrypted.byteLength);
+  fullKey.set(salt, encrypted.byteLength + iv.byteLength);
+  return fullKey
+}
+  
 async function onSubmit() {
   hasSubmittedOnce.value = true;
   if (!validate()) return;
   submitting.value = true;
   serverNote.value = '';
-  // Simulated submission — a real endpoint can be wired in here.
-  await new Promise((r) => setTimeout(r, 900));
-  submitting.value = false;
-  submitted.value = true;
+  
+  try {
+    const payload = composeMailRequest();
+    const apiKeyEncrypted = await encryptApiKey();
+    
+    let binary = '';
+    for (let i = 0; i < apiKeyEncrypted.byteLength; i++) {
+      binary += String.fromCharCode(apiKeyEncrypted[i]);
+    }
+
+    const apiKeyEncryptedBase64 = window.btoa(binary);
+
+    await fetch(import.meta.env.VITE_CONTACT_ENDPOINT, {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKeyEncryptedBase64
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    resetForm()
+  } catch (error) {
+    console.error("Error submitting form:", error);
+  } finally {
+    submitting.value = false;
+    submitted.value = true;
+  }
+    
 }
 
 const summaryVisible = computed(() => hasSubmittedOnce.value && Object.keys(errors).length > 0);
